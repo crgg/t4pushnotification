@@ -1,24 +1,24 @@
-from pydantic_settings import BaseSettings, SettingsConfigDict
-from pydantic import Field
+import secrets
+import os
+class Config:
+    APNS_KEY_ID = os.getenv('APNS_KEY_ID')
+    APNS_TEAM_ID = os.getenv('APNS_TEAM_ID')
+    APNS_AUTH_KEY_PATH = os.getenv('APNS_AUTH_KEY_PATH')
+    APNS_TOPIC = os.getenv('APNS_TOPIC')
+    APNS_USE_SANDBOX = True
 
-class Settings(BaseSettings):
-    model_config = SettingsConfigDict(env_file=".env", extra="ignore")
+    # Authentication Configuration
+    AUTH_SECRET_KEY = secrets.token_urlsafe(32)  # Generate a secure secret key
+    AUTH_PASSPHRASE = os.getenv('APP_PASS_PHRASE')
+    AUTH_TOKEN_EXPIRY = 86400  # 24 hours in seconds
+    ENCRYPT_KEY = os.getenv('ENCRYPT_KEY')
 
-    app_name: str = Field(default="push-service", alias="APP_NAME")
-    env: str = Field(default="local", alias="ENV")
+    # Server Configuration
+    PORT = 5000
+    DEBUG = True
 
-    database_url: str = Field(alias="DATABASE_URL")
+    # Token expiration time (in seconds) - APNs tokens are valid for 1 hour
+    JWT_TOKEN_EXPIRY = 3600  # 1 hour
 
-    ntfy_base_url: str = Field(default="https://ntfy.sh", alias="NTFY_BASE_URL")
-    ntfy_auth_mode: str = Field(default="none", alias="NTFY_AUTH_MODE")  # none|basic
-    ntfy_username: str | None = Field(default=None, alias="NTFY_USERNAME")
-    ntfy_password: str | None = Field(default=None, alias="NTFY_PASSWORD")
-
-    api_key: str | None = Field(default=None, alias="API_KEY")
-    apns_team_id:str =Field(default="")
-    apns_key_id:str =Field(default="")
-    apns_p8_pem:str =Field(default="")
-    apns_bundle_id:str =Field(default="")
-    apns_sandbox:str =Field(default="")
-
-settings = Settings()
+class Settings:
+    DATABASE_URL = os.getenv('DATABASE_URL')

@@ -7,309 +7,111 @@ pip install flask PyJWT cryptography httpx[http2]
 """
 
 from flask import Flask, request, jsonify
-import jwt
+import jwt as pyjwt  # Renamed to avoid confusion with APNs JWT
 import time
-import httpx
-from datetime import datetime
-from pathlib import Path
+from datetime import datetime, timedelta
+from app.config import Config
 import logging
+from functools import wraps
+
+from app.apns_client import APNsHandler
 
 app = Flask(__name__)
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# ==================== CONFIGURATION ====================
-class Config:
-    # APNs Configuration
-    APNS_KEY_ID = "Q38C4NR93H"  # 10 character Key ID from Apple Developer Console
-    APNS_TEAM_ID = "7T5KXK2RFT"  # 10 character Team ID
-    APNS_AUTH_KEY_PATH = "AuthKey_7SFU38488U.p8"  # Path to your .p8 file
-    APNS_TOPIC = "t4app.com.t4ever"  # Your iOS app's bundle ID
-    APNS_USE_SANDBOX = True  # True for development, False for production
+# ==================== Authentication Decorator ====================
+def require_auth(f):
+    @wraps(f)
+    def decorated_function(*args, **kwargs):
+        token = None
 
-    # Server Configuration
-    PORT = 5000
-    DEBUG = True
+        auth_header = request.headers.get('Authorization')
+        if auth_header and auth_header.startswith('Bearer '):
+            token = auth_header.split(' ')[1]
 
-    # Token expiration time (in seconds) - APNs tokens are valid for 1 hour
-    JWT_TOKEN_EXPIRY = 3600  # 1 hour
-
-# ==================== APNs Handler ====================
-class APNsHandler:
-    def __init__(self):
-        self.key_id = Config.APNS_KEY_ID
-        self.team_id = Config.APNS_TEAM_ID
-        self.bundle_id = Config.APNS_TOPIC
-        self.auth_key = self._load_auth_key()
-        self.endpoint = "https://api.sandbox.push.apple.com" if Config.APNS_USE_SANDBOX else "https://api.push.apple.com"
-        self.cached_token = None
-        self.token_expiry = 0
-
-    def _load_auth_key(self):
-        """Load the APNs authentication key from .p8 file"""
-        try:
-            auth_key_path = Path(Config.APNS_AUTH_KEY_PATH)
-            if not auth_key_path.exists():
-                logger.error(f"APNs auth key not found at {Config.APNS_AUTH_KEY_PATH}")
-                return None
-
-            with open(auth_key_path, 'r') as f:
-                key_content = f.read()
-                logger.info("APNs authentication key loaded successfully")
-                return key_content
-        except Exception as e:
-            logger.error(f"Error loading APNs auth key: {str(e)}")
-            return None
-
-    def _generate_jwt_token(self):
-        """Generate JWT token for APNs authentication (cached for 1 hour)"""
-        if not self.auth_key:
-            return None
-
-        # Return cached token if still valid
-        current_time = int(time.time())
-        #if self.cached_token and current_time < self.token_expiry:
-        #    return self.cached_token
-
-        headers = {
-            "alg": "ES256",
-            "kid": self.key_id
-        }
-
-        payload = {
-            "iss": self.team_id,
-            "iat": current_time
-        }
+        if not token:
+            return jsonify({
+                'status': False,
+                'message': 'Authentication required'
+            }), 401
 
         try:
-            token = jwt.encode(
-                payload,
-                self.auth_key,
-                algorithm="ES256",
-                headers=headers
+            pyjwt.decode(
+                token,
+                Config.AUTH_SECRET_KEY,
+                algorithms=['HS256']
             )
 
-            # Cache the token
-            self.cached_token = token
-            self.token_expiry = current_time + Config.JWT_TOKEN_EXPIRY - 60  # 1 minute buffer
+        except pyjwt.ExpiredSignatureError:
+            return jsonify({
+                'status': False,
+                'message': 'Token expired'
+            }), 401
+        except pyjwt.InvalidTokenError:
+            return jsonify({
+                'status': False,
+                'message': 'Invalid token'
+            }), 401
 
-            logger.info("New JWT token generated and cached")
-            return token
-        except Exception as e:
-            logger.error(f"Error generating JWT token: {str(e)}")
-            return None
+        return f(*args, **kwargs)
 
-    def send_notification(self, device_token, title, message, badge=None, sound="default",
-                          category=None, thread_id=None, data=None, priority="high",
-                          collapse_id=None, expiration=None):
-        """
-        Send push notification to iOS device
+    return decorated_function
 
-        Args:
-            device_token: APNs device token
-            title: Notification title
-            message: Notification body
-            badge: Badge count (optional)
-            sound: Sound to play (default: "default")
-            category: Notification category for actions (optional)
-            thread_id: Thread identifier for grouping (optional)
-            data: Custom data dictionary (optional)
-            priority: "high" (10) or "low" (5)
-            collapse_id: Identifier for notification coalescing (optional)
-            expiration: Unix timestamp when notification expires (optional)
-        """
-        if not self.auth_key:
-            return {
-                "success": False,
-                "error": "APNs authentication key not configured",
-                "details": "Please ensure the .p8 file is in the correct location"
-            }
-
-        jwt_token = self._generate_jwt_token()
-        if not jwt_token:
-            return {
-                "success": False,
-                "error": "Failed to generate JWT token",
-                "details": "Check your Key ID, Team ID, and .p8 file format"
-            }
-
-        # Build the alert payload
-        alert = {
-            "title": title,
-            "body": message
-        }
-
-        # Build the aps payload
-        aps = {
-            "alert": alert,
-            "sound": sound
-        }
-
-        # Add optional aps fields
-        if badge is not None:
-            aps["badge"] = badge
-
-        if category:
-            aps["category"] = category
-
-        if thread_id:
-            aps["thread-id"] = thread_id
-
-        # Build the complete payload
-        payload = {"aps": aps}
-
-        # Add custom data if provided
-        if data and isinstance(data, dict):
-            payload.update(data)
-
-        # APNs HTTP/2 endpoint
-        url = f"{self.endpoint}/3/device/{device_token}"
-
-        # Build headers
-        headers = {
-            "authorization": f"bearer {jwt_token}",
-            "apns-topic": self.bundle_id,
-            "apns-push-type": "alert",
-            "apns-priority": "10" if priority == "high" else "5"
-        }
-
-        # Add optional headers
-        if collapse_id:
-            headers["apns-collapse-id"] = collapse_id
-
-        if expiration is not None:
-            headers["apns-expiration"] = str(expiration)
-        else:
-            headers["apns-expiration"] = "0"  # Immediate expiration if not delivered
-
-        try:
-            # Use httpx with HTTP/2 support
-            with httpx.Client(http2=True, timeout=30.0, verify=True) as client:
-                response = client.post(
-                    url,
-                    headers=headers,
-                    json=payload
-                )
-
-            #Checkear el response
-            #Aqui probablemente viene el error.
-            if response.status_code == 200:
-                logger.info(f"✓ Notification sent successfully to token: {device_token[:8]}...")
-                return {
-                    "success": True,
-                    "message": "Notification sent successfully",
-                    "apns_id": response.headers.get("apns-id"),
-                    "device_token": device_token[:8] + "..."  # Partial token for logging
-                }
-            else:
-                # Parse APNs error response
-                error_data = {}
-                if response.text:
-                    try:
-                        error_data = response.json()
-                    except:
-                        pass
-
-                reason = error_data.get("reason", "Unknown error")
-                timestamp = error_data.get("timestamp")
-
-                logger.error(f"✗ APNs error: {reason} (status {response.status_code}) for token: {device_token[:8]}...")
-
-                return {
-                    "success": False,
-                    "error": reason,
-                    "status_code": response.status_code,
-                    "timestamp": timestamp,
-                    "device_token": device_token[:8] + "...",
-                    "details": self._get_error_description(reason)
-                }
-
-        except httpx.ConnectTimeout:
-            logger.error(f"✗ Connection timeout to APNs")
-            return {
-                "success": False,
-                "error": "Connection timeout",
-                "details": "Could not connect to APNs servers. Check your internet connection."
-            }
-        except httpx.ReadTimeout:
-            logger.error(f"✗ Read timeout from APNs")
-            return {
-                "success": False,
-                "error": "Read timeout",
-                "details": "APNs server did not respond in time"
-            }
-        except httpx.ConnectError as e:
-            logger.error(f"✗ Connection error: {str(e)}")
-            return {
-                "success": False,
-                "error": "Connection error",
-                "details": f"Could not connect to APNs: {str(e)}. Check your credentials and network."
-            }
-        except Exception as e:
-            logger.error(f"✗ APNs exception: {str(e)}")
-            return {
-                "success": False,
-                "error": str(e),
-                "details": "Unexpected error occurred. Check logs for details."
-            }
-
-    def _get_error_description(self, reason):
-        """Get human-readable description of APNs error"""
-        error_descriptions = {
-            "BadDeviceToken": "The device token is invalid. Remove this token from your database.",
-            "DeviceTokenNotForTopic": "The device token does not match the specified topic (bundle ID).",
-            "Unregistered": "The device token is inactive. Remove this token from your database.",
-            "BadCertificate": "The certificate is invalid.",
-            "BadCertificateEnvironment": "Certificate/environment mismatch (sandbox vs production).",
-            "ExpiredProviderToken": "The provider token (JWT) has expired. Generating new token...",
-            "Forbidden": "Request forbidden.",
-            "InvalidProviderToken": "The provider token is invalid.",
-            "MissingDeviceToken": "No device token specified in the request path.",
-            "MissingTopic": "The apns-topic header is missing.",
-            "PayloadTooLarge": "The notification payload is too large (max 4KB).",
-            "TopicDisallowed": "Pushing to this topic is not allowed.",
-            "BadMessageId": "The apns-id value is invalid.",
-            "BadExpirationDate": "The apns-expiration value is invalid.",
-            "BadPriority": "The apns-priority value is invalid.",
-            "MissingProviderToken": "No provider certificate or token specified.",
-            "BadPath": "The request path is invalid.",
-            "MethodNotAllowed": "The HTTP method is not allowed.",
-            "TooManyRequests": "Too many requests sent. Slow down.",
-            "IdleTimeout": "Connection idle timeout.",
-            "Shutdown": "APNs server is shutting down.",
-            "InternalServerError": "APNs internal server error. Retry later.",
-            "ServiceUnavailable": "APNs service unavailable. Retry later.",
-            "MissingPayload": "The notification payload is empty."
-        }
-        return error_descriptions.get(reason, "Unknown error. Check APNs documentation.")
-
-    def validate_token(self, device_token):
-        """Validate device token format"""
-        # APNs tokens are 64 hexadecimal characters
-        if not device_token:
-            return False, "Device token is empty"
-
-        # Remove any spaces or angle brackets
-        clean_token = device_token.replace(" ", "").replace("<", "").replace(">", "")
-
-        if len(clean_token) != 64:
-            return False, f"Invalid token length: {len(clean_token)} (expected 64)"
-
-        if not all(c in '0123456789abcdefABCDEF' for c in clean_token):
-            return False, "Token contains invalid characters (must be hexadecimal)"
-
-        return True, clean_token
-
-# ==================== Initialize Handler ====================
+# ==================== APNs Handler ====================
 apns = APNsHandler()
 
 # ==================== API Routes ====================
+@app.route('/debug/jwt', methods=['GET'])
+@require_auth
+def debug_jwt():
+    """
+    Debug endpoint to test JWT token generation and decoding
+    """
+    import json
+
+    jwt_token = apns._generate_jwt_token()
+
+    if not jwt_token:
+        return jsonify({
+            "success": False,
+            "error": "Failed to generate JWT token"
+        }), 500
+
+    try:
+        # Decode without verification to inspect the token
+        decoded_header = pyjwt.get_unverified_header(jwt_token)
+        decoded_payload = pyjwt.decode(jwt_token, options={"verify_signature": False})
+
+        return jsonify({
+            "success": True,
+            "jwt_token": jwt_token,
+            "jwt_length": len(jwt_token),
+            "header": decoded_header,
+            "payload": decoded_payload,
+            "issued_at": decoded_payload.get("iat"),
+            "issuer": decoded_payload.get("iss"),
+            "key_id_in_header": decoded_header.get("kid"),
+            "algorithm": decoded_header.get("alg"),
+            "validation": {
+                "has_iss": "iss" in decoded_payload,
+                "has_iat": "iat" in decoded_payload,
+                "has_kid": "kid" in decoded_header,
+                "alg_is_ES256": decoded_header.get("alg") == "ES256",
+                "kid_matches_config": decoded_header.get("kid") == Config.APNS_KEY_ID,
+                "iss_matches_config": decoded_payload.get("iss") == Config.APNS_TEAM_ID
+            }
+        }), 200
+    except Exception as e:
+        return jsonify({
+            "success": False,
+            "error": str(e),
+            "jwt_token": jwt_token
+        }), 500
 
 @app.route('/debug/config', methods=['GET'])
+@require_auth
 def debug_config():
-    """
-    Debug endpoint to check configuration (DO NOT USE IN PRODUCTION)
-    """
     jwt_token = apns._generate_jwt_token()
 
     return jsonify({
@@ -327,6 +129,45 @@ def debug_config():
         "auth_key_starts_with": apns.auth_key[:50] if apns.auth_key else None
     }), 200
 
+
+@app.route('/auth/login', methods=['POST'])
+def login():
+    payload = request.get_json()
+    passphrase = payload.get('passphrase')
+
+    if not passphrase or passphrase == '':
+        return jsonify({
+            'status': False,
+            'message': 'Passphrase is empty'
+        }), 400
+
+    if passphrase != Config.AUTH_PASSPHRASE:
+        return jsonify({
+            'status': False,
+            'message': 'Wrong Passphrase'
+        }), 401
+
+    current_time = int(time.time())
+    token_payload = {
+        'key': Config.ENCRYPT_KEY,
+        'time': current_time,
+        'exp': current_time + Config.AUTH_TOKEN_EXPIRY
+    }
+
+    token = pyjwt.encode(
+        token_payload,
+        Config.AUTH_SECRET_KEY,
+        algorithm="HS256"
+    )
+
+    if isinstance(token, bytes):
+        token = token.decode('utf-8')
+
+    return jsonify({
+        'status': True,
+        'token': token,
+        'expires_in': Config.AUTH_TOKEN_EXPIRY
+    }), 200
 @app.route('/health', methods=['GET'])
 def health_check():
     """Health check endpoint"""
@@ -342,27 +183,8 @@ def health_check():
     }), 200 if is_configured else 503
 
 @app.route('/send', methods=['POST'])
+@require_auth
 def send_notification():
-    """
-    Send push notification to an iOS device
-
-    Expected JSON payload:
-    {
-        "device_token": "64-character hex token",
-        "title": "Notification Title",
-        "message": "Notification message body",
-        "badge": 1,  // Optional
-        "sound": "default",  // Optional
-        "category": "MESSAGE_CATEGORY",  // Optional
-        "thread_id": "thread-123",  // Optional for grouping
-        "data": {  // Optional custom data
-            "custom_key": "custom_value"
-        },
-        "priority": "high",  // Optional: "high" or "low"
-        "collapse_id": "update-1",  // Optional: for replacing notifications
-        "expiration": 1234567890  // Optional: Unix timestamp
-    }
-    """
     try:
         payload = request.get_json()
 
@@ -436,28 +258,8 @@ def send_notification():
         }), 500
 
 @app.route('/send/batch', methods=['POST'])
+@require_auth
 def send_batch_notifications():
-    """
-    Send push notifications to multiple iOS devices
-
-    Expected JSON payload:
-    {
-        "notifications": [
-            {
-                "device_token": "token1",
-                "title": "Title 1",
-                "message": "Message 1",
-                "badge": 1,
-                "data": {}
-            },
-            {
-                "device_token": "token2",
-                "title": "Title 2",
-                "message": "Message 2"
-            }
-        ]
-    }
-    """
     try:
         payload = request.get_json()
 
@@ -598,10 +400,12 @@ def not_found(error):
         "success": False,
         "error": "Endpoint not found",
         "available_endpoints": [
-            "GET /health",
-            "POST /send",
-            "POST /send/batch",
-            "POST /validate/token"
+            "POST /auth/login - Get authentication token",
+            "GET /auth/verify - Verify token validity",
+            "GET /health - Health check (no auth required)",
+            "POST /send - Send single notification (requires auth)",
+            "POST /send/batch - Send batch notifications (requires auth)",
+            "POST /validate/token - Validate device token (no auth required)"
         ]
     }), 404
 
@@ -620,6 +424,7 @@ if __name__ == '__main__':
     print(f"Environment: {'SANDBOX' if Config.APNS_USE_SANDBOX else 'PRODUCTION'}")
     print(f"Bundle ID: {Config.APNS_TOPIC}")
     print(f"APNs Configured: {apns.auth_key is not None}")
+    print(f"Auth Token Expiry: {Config.AUTH_TOKEN_EXPIRY // 3600} hours")
     print(f"Port: {Config.PORT}")
     print("=" * 60)
 
@@ -627,6 +432,15 @@ if __name__ == '__main__':
         print("⚠️  WARNING: APNs authentication key not loaded!")
         print(f"   Please ensure {Config.APNS_AUTH_KEY_PATH} exists")
         print("=" * 60)
+
+    if Config.AUTH_PASSPHRASE == "your_secure_passphrase_here_change_this":
+        print("⚠️  WARNING: Default passphrase detected!")
+        print("   Please change AUTH_PASSPHRASE in Config for security!")
+        print("=" * 60)
+
+    print("\n🔐 Authentication enabled!")
+    print("   Use POST /auth/login with your passphrase to get a token")
+    print("=" * 60)
 
     app.run(
         host='0.0.0.0',

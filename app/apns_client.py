@@ -1,94 +1,253 @@
-from __future__ import annotations
-import time
-import json
 import httpx
-from typing import Any, Dict, Optional
 
-from cryptography.hazmat.primitives import serialization
-from cryptography.hazmat.backends import default_backend
-import base64
-import hashlib
-import hmac
+from app.config import Config
+from pathlib import Path
+import logging
+import jwt as pyjwt
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+import time
 
-def _b64url(data: bytes) -> str:
-    return base64.urlsafe_b64encode(data).rstrip(b"=").decode("ascii")
 
-def _jwt_es256(team_id: str, key_id: str, p8_pem: str) -> str:
-    """
-    Minimal ES256 JWT for APNs.
-    p8_pem is the content of your AuthKey_XXXXXX.p8 file.
-    """
-    header = {"alg": "ES256", "kid": key_id, "typ": "JWT"}
-    payload = {"iss": team_id, "iat": int(time.time())}
+class APNsHandler:
+    def __init__(self):
+        self.key_id = Config.APNS_KEY_ID
+        self.team_id = Config.APNS_TEAM_ID
+        self.bundle_id = Config.APNS_TOPIC
+        self.auth_key = self._load_auth_key()
+        self.endpoint = "https://api.sandbox.push.apple.com" if Config.APNS_USE_SANDBOX else "https://api.push.apple.com"
+        self.cached_token = None
+        self.token_expiry = 0
 
-    header_b64 = _b64url(json.dumps(header, separators=(",", ":")).encode())
-    payload_b64 = _b64url(json.dumps(payload, separators=(",", ":")).encode())
-    signing_input = f"{header_b64}.{payload_b64}".encode()
+    def _load_auth_key(self):
+        """Load the APNs authentication key from .p8 file"""
+        try:
+            auth_key_path = Path(Config.APNS_AUTH_KEY_PATH)
+            if not auth_key_path.exists():
+                logger.error(f"APNs auth key not found at {Config.APNS_AUTH_KEY_PATH}")
+                return None
 
-    private_key = serialization.load_pem_private_key(
-        p8_pem.encode(),
-        password=None,
-        backend=default_backend(),
-    )
+            with open(auth_key_path, 'r') as f:
+                key_content = f.read()
+                logger.info("APNs authentication key loaded successfully")
+                return key_content
+        except Exception as e:
+            logger.error(f"Error loading APNs auth key: {str(e)}")
+            return None
 
-    # cryptography signs with DER-encoded ECDSA; APNs accepts standard JWS ECDSA signature
-    # We'll use cryptography's sign and then convert DER->raw (r||s) per JWS.
-    from cryptography.hazmat.primitives.asymmetric import ec
-    from cryptography.hazmat.primitives import hashes
-    sig_der = private_key.sign(signing_input, ec.ECDSA(hashes.SHA256()))
+    def _generate_jwt_token(self):
+        if not self.auth_key:
+            logger.error("No auth key available for JWT generation")
+            return None
 
-    # DER to raw r||s
-    from cryptography.hazmat.primitives.asymmetric.utils import decode_dss_signature
-    r, s = decode_dss_signature(sig_der)
-    r_bytes = r.to_bytes(32, "big")
-    s_bytes = s.to_bytes(32, "big")
-    sig_raw = r_bytes + s_bytes
-
-    return f"{header_b64}.{payload_b64}.{_b64url(sig_raw)}"
-
-class ApnsClient:
-    def __init__(
-            self,
-            team_id: str,
-            key_id: str,
-            p8_pem: str,
-            bundle_id: str,
-            use_sandbox: bool = False,
-    ):
-        self.team_id = team_id
-        self.key_id = key_id
-        self.p8_pem = p8_pem
-        self.bundle_id = bundle_id
-        self.base = "https://api.sandbox.push.apple.com" if use_sandbox else "https://api.push.apple.com"
-
-    async def send(
-            self,
-            device_token: str,
-            title: str,
-            body: str,
-            *,
-            data: Optional[Dict[str, Any]] = None,
-    ) -> tuple[int, str]:
-        jwt = _jwt_es256(self.team_id, self.key_id, self.p8_pem)
-
-        # Standard APS payload
-        payload: Dict[str, Any] = {
-            "aps": {
-                "alert": {"title": title, "body": body},
-                "sound": "default",
-            }
-        }
-        if data:
-            payload["data"] = data
+        current_time = int(time.time())
+        if self.cached_token and current_time < self.token_expiry:
+            logger.debug("Using cached JWT token")
+            return self.cached_token
 
         headers = {
-            "authorization": f"bearer {jwt}",
-            "apns-topic": self.bundle_id,  # your iOS app bundle id
+            "alg": "ES256",
+            "kid": self.key_id,
+            "typ": "JWT"
         }
 
-        url = f"{self.base}/3/device/{device_token}"
+        payload = {
+            "iss": self.team_id,
+            "iat": current_time
+        }
 
-        async with httpx.AsyncClient(http2=True, timeout=10.0) as client:
-            r = await client.post(url, headers=headers, json=payload)
+        try:
+            auth_key_clean = self.auth_key.strip()
 
-        return r.status_code, r.text
+            token = pyjwt.encode(
+                payload,
+                auth_key_clean,
+                algorithm="ES256",
+                headers=headers
+            )
+
+            if isinstance(token, bytes):
+                token = token.decode('utf-8')
+
+            self.cached_token = token
+            self.token_expiry = current_time + Config.JWT_TOKEN_EXPIRY - 60
+
+            logger.info(f"New JWT token generated and cached (expires in {Config.JWT_TOKEN_EXPIRY}s)")
+            logger.debug(f"JWT Token: {token[:50]}...")
+            return token
+        except Exception as e:
+            logger.error(f"Error generating JWT token: {str(e)}")
+            logger.error(f"Key ID: {self.key_id}, Team ID: {self.team_id}")
+            return None
+    def validate_token(self, device_token):
+        if not device_token:
+            return False, "Device token is empty"
+
+        clean_token = device_token.replace(" ", "").replace("<", "").replace(">", "")
+
+        if len(clean_token) != 64:
+            return False, f"Invalid token length: {len(clean_token)} (expected 64)"
+
+        if not all(c in '0123456789abcdefABCDEF' for c in clean_token):
+            return False, "Token contains invalid characters (must be hexadecimal)"
+
+        return True, clean_token
+
+
+
+    def send_notification(self, device_token, title, message, badge=None, sound="default",
+                          category=None, thread_id=None, data=None, priority="high",
+                          collapse_id=None, expiration=None):
+
+        if not self.auth_key:
+            return {
+                "success": False,
+                "error": "APNs authentication key not configured",
+                "details": "Please ensure the .p8 file is in the correct location"
+            }
+
+        jwt_token = self._generate_jwt_token()
+        if not jwt_token:
+            return {
+                "success": False,
+                "error": "Failed to generate JWT token",
+                "details": "Check your Key ID, Team ID, and .p8 file format"
+            }
+
+        alert = {
+            "title": title,
+            "body": message
+        }
+
+        aps = {
+            "alert": alert,
+            "sound": sound
+        }
+
+        if badge is not None:
+            aps["badge"] = badge
+
+        if category:
+            aps["category"] = category
+
+        if thread_id:
+            aps["thread-id"] = thread_id
+
+        payload = {"aps": aps}
+
+        if data and isinstance(data, dict):
+            payload.update(data)
+
+        url = f"{self.endpoint}/3/device/{device_token}"
+
+        headers = {
+            "authorization": f"bearer {jwt_token}",
+            "apns-topic": self.bundle_id,
+            "apns-push-type": "alert",
+            "apns-priority": "10" if priority == "high" else "5"
+        }
+
+        if collapse_id:
+            headers["apns-collapse-id"] = collapse_id
+
+        if expiration is not None:
+            headers["apns-expiration"] = str(expiration)
+        else:
+            headers["apns-expiration"] = "0"
+
+        try:
+            with httpx.Client(http2=True, timeout=30.0, verify=True) as client:
+                response = client.post(
+                    url,
+                    headers=headers,
+                    json=payload
+                )
+
+            if response.status_code == 200:
+                logger.info(f"✓ Notification sent successfully to token: {device_token[:8]}...")
+                return {
+                    "success": True,
+                    "message": "Notification sent successfully",
+                    "apns_id": response.headers.get("apns-id"),
+                    "device_token": device_token[:8] + "..."
+                }
+            else:
+                error_data = {}
+                if response.text:
+                    try:
+                        error_data = response.json()
+                    except:
+                        pass
+
+                reason = error_data.get("reason", "Unknown error")
+                timestamp = error_data.get("timestamp")
+
+                logger.error(f"✗ APNs error: {reason} (status {response.status_code}) for token: {device_token[:8]}...")
+
+                return {
+                    "success": False,
+                    "error": reason,
+                    "status_code": response.status_code,
+                    "timestamp": timestamp,
+                    "device_token": device_token[:8] + "...",
+                    "details": self._get_error_description(reason)
+                }
+
+        except httpx.ConnectTimeout:
+            logger.error(f"✗ Connection timeout to APNs")
+            return {
+                "success": False,
+                "error": "Connection timeout",
+                "details": "Could not connect to APNs servers. Check your internet connection."
+            }
+        except httpx.ReadTimeout:
+            logger.error(f"✗ Read timeout from APNs")
+            return {
+                "success": False,
+                "error": "Read timeout",
+                "details": "APNs server did not respond in time"
+            }
+        except httpx.ConnectError as e:
+            logger.error(f"✗ Connection error: {str(e)}")
+            return {
+                "success": False,
+                "error": "Connection error",
+                "details": f"Could not connect to APNs: {str(e)}. Check your credentials and network."
+            }
+        except Exception as e:
+            logger.error(f"✗ APNs exception: {str(e)}")
+            return {
+                "success": False,
+                "error": str(e),
+                "details": "Unexpected error occurred. Check logs for details."
+            }
+
+    def _get_error_description(self, reason):
+        error_descriptions = {
+            "BadDeviceToken": "The device token is invalid. Remove this token from your database.",
+            "DeviceTokenNotForTopic": "The device token does not match the specified topic (bundle ID).",
+            "Unregistered": "The device token is inactive. Remove this token from your database.",
+            "BadCertificate": "The certificate is invalid.",
+            "BadCertificateEnvironment": "Certificate/environment mismatch (sandbox vs production).",
+            "ExpiredProviderToken": "The provider token (JWT) has expired. Generating new token...",
+            "Forbidden": "Request forbidden.",
+            "InvalidProviderToken": "The provider token is invalid.",
+            "MissingDeviceToken": "No device token specified in the request path.",
+            "MissingTopic": "The apns-topic header is missing.",
+            "PayloadTooLarge": "The notification payload is too large (max 4KB).",
+            "TopicDisallowed": "Pushing to this topic is not allowed.",
+            "BadMessageId": "The apns-id value is invalid.",
+            "BadExpirationDate": "The apns-expiration value is invalid.",
+            "BadPriority": "The apns-priority value is invalid.",
+            "MissingProviderToken": "No provider certificate or token specified.",
+            "BadPath": "The request path is invalid.",
+            "MethodNotAllowed": "The HTTP method is not allowed.",
+            "TooManyRequests": "Too many requests sent. Slow down.",
+            "IdleTimeout": "Connection idle timeout.",
+            "Shutdown": "APNs server is shutting down.",
+            "InternalServerError": "APNs internal server error. Retry later.",
+            "ServiceUnavailable": "APNs service unavailable. Retry later.",
+            "MissingPayload": "The notification payload is empty."
+        }
+        return error_descriptions.get(reason, "Unknown error. Check APNs documentation.")
+
