@@ -15,5 +15,10 @@ class Settings(BaseSettings):
     ntfy_password: str | None = Field(default=None, alias="NTFY_PASSWORD")
 
     api_key: str | None = Field(default=None, alias="API_KEY")
+    apns_team_id:str =Field(default="")
+    apns_key_id:str =Field(default="")
+    apns_p8_pem:str =Field(default="")
+    apns_bundle_id:str =Field(default="")
+    apns_sandbox:str =Field(default="")
 
 settings = Settings()

@@ -21,3 +21,8 @@ class SendNotificationResponse(BaseModel):
     topic: str
     ntfy_status_code: int
     ntfy_response: Optional[Dict[str, Any]] = None
+
+class SendNotificationDeviceToken(BaseModel):
+    device_token: str = Field(default=None)
+    message: str = Field(default=None)
+    title: str = Field(default=None)

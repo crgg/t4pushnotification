@@ -1,9 +1,9 @@
 from sqlalchemy import String, Integer, DateTime, func, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column
-from db import Base
+from .db import Base
 
 class Device(Base):
-    __tablename__ = "devices"
+    __tablename__ = "device_tokens"
     __table_args__ = (
         UniqueConstraint("user_id", name="uq_devices_user_id"),
     )
