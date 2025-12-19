@@ -1,28 +1,8 @@
-from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker, DeclarativeBase
-from app.config import Settings as settings
 import psycopg2
 from psycopg2.extras import RealDictCursor
 import logging
 from app.config import Config
 import json
-
-engine = create_engine(
-    settings.DATABASE_URL,
-    pool_pre_ping=True,
-)
-
-SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
-
-class Base(DeclarativeBase):
-    pass
-
-def get_db():
-    db = SessionLocal()
-    try:
-        yield db
-    finally:
-        db.close()
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -55,37 +35,74 @@ class DatabaseHandler:
                 logger.error("Could not connect to database for initialization")
                 return
 
-            cursor = conn.cursor()
+            with conn:
+                with conn.cursor() as cursor:
 
-            # Create notifications table
-            cursor.execute("""
-                           CREATE TABLE IF NOT EXISTS notification_logs (
-                                                                            id SERIAL PRIMARY KEY,
-                                                                            device_token VARCHAR(64) NOT NULL,
-                               title VARCHAR(255) NOT NULL,
-                               message TEXT NOT NULL,
-                               badge INTEGER,
-                               sound VARCHAR(50),
-                               category VARCHAR(100),
-                               thread_id VARCHAR(100),
-                               custom_data JSONB,
-                               priority VARCHAR(10),
-                               success BOOLEAN NOT NULL,
-                               error_code VARCHAR(100),
-                               error_message TEXT,
-                               apns_id VARCHAR(100),
-                               status_code INTEGER,
-                               ip_address VARCHAR(45),
-                               created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                               INDEX idx_device_token (device_token),
-                               INDEX idx_created_at (created_at),
-                               INDEX idx_success (success)
-                               )
-                           """)
+                    cursor.execute("""
+                                   CREATE TABLE IF NOT EXISTS notification_logs (
+                                                                                    id SERIAL PRIMARY KEY,
+                                                                                    device_token VARCHAR(64) NOT NULL,
+                                       title VARCHAR(255) NOT NULL,
+                                       message TEXT NOT NULL,
+                                       badge INTEGER,
+                                       sound VARCHAR(50),
+                                       category VARCHAR(100),
+                                       thread_id VARCHAR(100),
+                                       custom_data JSONB,
+                                       priority VARCHAR(10),
+                                       success BOOLEAN NOT NULL,
+                                       error_code VARCHAR(100),
+                                       error_message TEXT,
+                                       apns_id VARCHAR(100),
+                                       status_code INTEGER,
+                                       ip_address VARCHAR(45),
+                                       created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                                       );
+                                   """)
 
-            conn.commit()
-            cursor.close()
-            conn.close()
+                    cursor.execute("""
+                                   CREATE INDEX IF NOT EXISTS idx_notification_logs_device_token
+                                       ON notification_logs (device_token);
+                                   """)
+
+                    cursor.execute("""
+                                   CREATE INDEX IF NOT EXISTS idx_notification_logs_created_at
+                                       ON notification_logs (created_at);
+                                   """)
+
+                    cursor.execute("""
+                                   CREATE INDEX IF NOT EXISTS idx_notification_logs_success
+                                       ON notification_logs (success);
+                                   """)
+
+                    cursor.execute("""
+                        CREATE TABLE IF NOT EXISTS apn_keys(
+                           id BIGSERIAL PRIMARY KEY,
+
+                            key_id VARCHAR(10) NOT NULL,
+                            team_id VARCHAR(10) NOT NULL,
+                            bundle_id VARCHAR(255) NOT NULL,
+                            p8_filename VARCHAR(255) NOT NULL,
+                            enc_filename VARCHAR(255),
+                            enc_alg VARCHAR(50) NOT NULL DEFAULT 'AES-256-GCM',
+                            enc_nonce BYTEA,
+                            key_version INTEGER NOT NULL DEFAULT 1,
+                            file_sha256 CHAR(64),
+                            environment VARCHAR(20) NOT NULL DEFAULT 'sandbox',
+                            is_active BOOLEAN NOT NULL DEFAULT FALSE,
+                            created_at TIMESTAMP WITHOUT TIME ZONE NOT NULL DEFAULT NOW(),
+                            updated_at TIMESTAMP WITHOUT TIME ZONE NOT NULL DEFAULT NOW()
+                        )
+                    """)
+
+                    cursor.execute("""
+                        ALTER TABLE apn_keys
+                        ADD CONSTRAINT chk_apns_enc_metadata_active
+                        CHECK (
+                        (is_active = FALSE)
+                        OR
+                        (enc_filename IS NOT NULL AND enc_nonce IS NOT NULL)
+                        """)
 
             logger.info("✓ Database initialized successfully")
 
@@ -123,7 +140,7 @@ class DatabaseHandler:
             conn.commit()
             cursor.close()
             conn.close()
-
+            logger.info("✓ Notification inserted successfully")
             return True
 
         except Exception as e:

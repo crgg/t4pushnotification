@@ -6,9 +6,11 @@ import logging
 import jwt as pyjwt
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+from app.db import DatabaseHandler
 import time
 
 
+db = DatabaseHandler()
 class APNsHandler:
     def __init__(self):
         self.key_id = Config.APNS_KEY_ID
@@ -18,6 +20,8 @@ class APNsHandler:
         self.endpoint = "https://api.sandbox.push.apple.com" if Config.APNS_USE_SANDBOX else "https://api.push.apple.com"
         self.cached_token = None
         self.token_expiry = 0
+
+
 
     def _load_auth_key(self):
         """Load the APNs authentication key from .p8 file"""
@@ -34,6 +38,74 @@ class APNsHandler:
         except Exception as e:
             logger.error(f"Error loading APNs auth key: {str(e)}")
             return None
+
+    def save_apns_config(
+            self, key_id, team_id, bundle_id,
+            p8_filename, environment='sandbox',
+            enc_filename=None, enc_alg='AES-256-GCM',
+            enc_nonce=None, key_version=1, file_sha256=None
+    ):
+        try:
+            conn = db.get_connection()
+            if not conn:
+                logger.error("Could not connect to database")
+                return False
+
+            cursor = conn.cursor()
+
+            cursor.execute("UPDATE apns_config SET is_active = false")
+
+            cursor.execute("""
+                           INSERT INTO apns_config (
+                               key_id, team_id, bundle_id, p8_filename, environment, is_active,
+                               enc_filename, enc_alg, enc_nonce, key_version, file_sha256
+                           ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                           """, (
+                               key_id, team_id, bundle_id, p8_filename, environment, True,
+                               enc_filename, enc_alg, enc_nonce, key_version, file_sha256
+                           ))
+
+            conn.commit()
+            cursor.close()
+            conn.close()
+            return True
+
+        except Exception as e:
+            logger.error(f"Error saving APNs config: {str(e)}")
+            return False
+
+
+    def set_apn_key_active(self, key_id):
+        try:
+            conn = db.get_connection()
+            if not conn:
+                logger.error("Could not connect to database")
+                return False
+
+            cursor = conn.cursor()
+
+            # Deactivate all previous configs
+
+            cursor.execute("UPDATE apn_keys SET is_active = false")
+
+            # Insert new config
+            cursor.execute("""
+                           INSERT INTO apn_keys (
+                               key_id,  is_active
+                           ) VALUES (%s, %s)
+                           """, (key_id,True))
+
+
+            conn.commit()
+            cursor.close()
+            conn.close()
+
+            logger.info(f"✓ APNs config saved: {key_id}")
+            return True
+
+        except Exception as e:
+            logger.error(f"Error saving APNs config: {str(e)}")
+            return False
 
     def _generate_jwt_token(self):
         if not self.auth_key:

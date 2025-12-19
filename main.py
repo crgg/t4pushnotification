@@ -10,15 +10,73 @@ from flask import Flask, request, jsonify
 import jwt as pyjwt  # Renamed to avoid confusion with APNs JWT
 import time
 from datetime import datetime, timedelta
-from app.config import Config
+from app.config import Config, Settings
 import logging
 from functools import wraps
+import re
+import os, base64, hashlib
+from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
 from app.apns_client import APNsHandler
-
+from app.db import DatabaseHandler
 app = Flask(__name__)
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+
+
+# ==================== Helpers ====================
+ALLOWED_ENVIRONMENTS = {"sandbox", "production"}
+
+def _sanitize_token(value: str) -> str:
+    """Trim and remove surrounding whitespace; keep as-is otherwise."""
+    return (value or "").strip()
+
+def _is_valid_key_id(key_id: str) -> bool:
+    # Apple Key ID is typically 10 chars alphanumeric
+    return bool(re.fullmatch(r"[A-Z0-9]{10}", key_id or ""))
+
+def _is_valid_team_id(team_id: str) -> bool:
+    # Apple Team ID is typically 10 chars alphanumeric
+    return bool(re.fullmatch(r"[A-Z0-9]{10}", team_id or ""))
+
+def _is_valid_bundle_id(bundle_id: str) -> bool:
+    # Simple bundle id validation: com.company.app (allow letters, digits, dash, underscore, dot)
+    return bool(re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]*", bundle_id or ""))
+
+def _ensure_upload_dir(upload_dir: str) -> None:
+    os.makedirs(upload_dir, exist_ok=True)
+
+def _safe_p8_filename(key_id: str) -> str:
+    # deterministic, avoids user-provided filename
+    ts = datetime.utcnow().strftime("%Y%m%d%H%M%S")
+    return f"AuthKey_{key_id}_{ts}.p8"
+
+
+def get_enc_key_and_version():
+    key_b64 = os.getenv("APNS_ENCRYPTION_KEY_B64")
+    if not key_b64:
+        raise RuntimeError("APNS_ENCRYPTION_KEY_B64 is not set")
+
+    key = base64.b64decode(key_b64)
+    if len(key) != 32:
+        raise RuntimeError("APNS_ENCRYPTION_KEY_B64 must decode to 32 bytes (AES-256)")
+
+    version = int(os.getenv("APNS_KEY_VERSION", "1"))
+    return key, version
+
+def encrypt_bytes_aesgcm(plaintext: bytes, key: bytes) -> tuple[bytes, bytes]:
+    nonce = os.urandom(12)  # 96-bit nonce (recommended)
+    aesgcm = AESGCM(key)
+    ciphertext = aesgcm.encrypt(nonce, plaintext, None)  # ciphertext includes auth tag
+    return nonce, ciphertext
+
+def decrypt_bytes_aesgcm(nonce: bytes, ciphertext: bytes, key: bytes) -> bytes:
+    aesgcm = AESGCM(key)
+    return aesgcm.decrypt(nonce, ciphertext, None)
+
+def sha256_hex(data: bytes) -> str:
+    return hashlib.sha256(data).hexdigest()
 
 # ==================== Authentication Decorator ====================
 def require_auth(f):
@@ -60,6 +118,7 @@ def require_auth(f):
 
 # ==================== APNs Handler ====================
 apns = APNsHandler()
+db = DatabaseHandler()
 
 # ==================== API Routes ====================
 @app.route('/debug/jwt', methods=['GET'])
@@ -247,6 +306,7 @@ def send_notification():
         )
 
         status_code = 200 if result['success'] else 400
+        db.log_notification(device_token, title, message, success=result['success'],apns_id=result['apns_id'])
         return jsonify(result), status_code
 
     except Exception as e:
@@ -389,6 +449,106 @@ def validate_token():
     except Exception as e:
         return jsonify({
             "valid": False,
+            "error": str(e)
+        }), 500
+
+@app.route('/upload/key', methods=['POST'])
+def upload_key():
+    try:
+        # Expect multipart/form-data
+        # Fields: key_id, team_id, bundle_id, environment (optional)
+        form = request.form or {}
+
+        key_id = _sanitize_token(form.get("key_id"))
+        team_id = _sanitize_token(form.get("team_id"))
+        bundle_id = _sanitize_token(form.get("bundle_id"))
+        environment = _sanitize_token(form.get("environment") or "sandbox").lower()
+
+        required_fields = ["key_id", "team_id", "bundle_id"]
+        missing_fields = [f for f in required_fields if not form.get(f)]
+
+        if missing_fields:
+            return jsonify({
+                "success": False,
+                "error": f"Missing required fields: {', '.join(missing_fields)}",
+                "required_fields": required_fields
+            }), 400
+
+        # Validate formats (optional but recommended)
+        if not _is_valid_key_id(key_id):
+            return jsonify({"success": False, "error": "Invalid key_id format (expected 10 chars A-Z0-9)"}), 400
+        if not _is_valid_team_id(team_id):
+            return jsonify({"success": False, "error": "Invalid team_id format (expected 10 chars A-Z0-9)"}), 400
+        if not _is_valid_bundle_id(bundle_id):
+            return jsonify({"success": False, "error": "Invalid bundle_id format"}), 400
+
+        if environment not in ALLOWED_ENVIRONMENTS:
+            return jsonify({
+                "success": False,
+                "error": f"Invalid environment. Allowed: {', '.join(sorted(ALLOWED_ENVIRONMENTS))}"
+            }), 400
+
+        # File handling
+        file = request.files.get("file")
+        if not file or file.filename == "":
+            return jsonify({"success": False, "error": "File not found"}), 400
+
+        # Validate extension
+        original_name = (file.filename or "").lower()
+        if not original_name.endswith(".p8"):
+            return jsonify({"success": False, "error": "Invalid file type. Only .p8 is allowed"}), 400
+
+        # Choose upload directory (configure this in your app config)
+        upload_dir = app.config.get("APNS_KEYS_DIR", "storage/apns_keys")
+        _ensure_upload_dir(upload_dir)
+
+        # Save with deterministic safe name (don’t trust client filename)
+        p8_filename = _safe_p8_filename(key_id)
+        p8_path = os.path.join(upload_dir, p8_filename)
+
+        # Basic safety: do not overwrite accidentally
+        if os.path.exists(p8_path):
+            return jsonify({"success": False, "error": "A key with the same generated filename already exists"}), 409
+
+        file.save(p8_path)
+
+        # Persist in DB
+        ok = apns.save_apns_config(
+            key_id=key_id,
+            team_id=team_id,
+            bundle_id=bundle_id,
+            p8_filename=p8_filename,
+            environment=environment
+        )
+
+        if not ok:
+            # Roll back file if DB save failed
+            try:
+                if os.path.exists(p8_path):
+                    os.remove(p8_path)
+            except Exception:
+                pass
+
+            return jsonify({
+                "success": False,
+                "error": "Failed to save APNs configuration"
+            }), 500
+
+        return jsonify({
+            "success": True,
+            "message": "APNs key uploaded and configuration saved",
+            "data": {
+                "key_id": key_id,
+                "team_id": team_id,
+                "bundle_id": bundle_id,
+                "environment": environment,
+                "p8_filename": p8_filename
+            }
+        }), 201
+
+    except Exception as e:
+        return jsonify({
+            "success": False,
             "error": str(e)
         }), 500
 
