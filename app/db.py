@@ -28,7 +28,6 @@ class DatabaseHandler:
             return None
 
     def init_database(self):
-        """Initialize database and create tables if they don't exist"""
         try:
             conn = self.get_connection()
             if not conn:
@@ -36,27 +35,28 @@ class DatabaseHandler:
                 return
 
             with conn:
+                logger.info("Connection established, starting")
                 with conn.cursor() as cursor:
 
                     cursor.execute("""
                                    CREATE TABLE IF NOT EXISTS notification_logs (
-                                                                                    id SERIAL PRIMARY KEY,
-                                                                                    device_token VARCHAR(64) NOT NULL,
-                                       title VARCHAR(255) NOT NULL,
-                                       message TEXT NOT NULL,
-                                       badge INTEGER,
-                                       sound VARCHAR(50),
-                                       category VARCHAR(100),
-                                       thread_id VARCHAR(100),
-                                       custom_data JSONB,
-                                       priority VARCHAR(10),
-                                       success BOOLEAN NOT NULL,
-                                       error_code VARCHAR(100),
-                                       error_message TEXT,
-                                       apns_id VARCHAR(100),
-                                       status_code INTEGER,
-                                       ip_address VARCHAR(45),
-                                       created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                                        id SERIAL PRIMARY KEY,
+                                        device_token VARCHAR(64) NOT NULL,
+                                        title VARCHAR(255) NOT NULL,
+                                        message TEXT NOT NULL,
+                                        badge INTEGER,
+                                        sound VARCHAR(50),
+                                        category VARCHAR(100),
+                                        thread_id VARCHAR(100),
+                                        custom_data JSONB,
+                                        priority VARCHAR(10),
+                                        success BOOLEAN NOT NULL,
+                                        error_code VARCHAR(100),
+                                        error_message TEXT,
+                                        apns_id VARCHAR(100),
+                                        status_code INTEGER,
+                                        ip_address VARCHAR(45),
+                                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                                        );
                                    """)
 
@@ -78,7 +78,6 @@ class DatabaseHandler:
                     cursor.execute("""
                         CREATE TABLE IF NOT EXISTS apn_keys(
                            id BIGSERIAL PRIMARY KEY,
-
                             key_id VARCHAR(10) NOT NULL,
                             team_id VARCHAR(10) NOT NULL,
                             bundle_id VARCHAR(255) NOT NULL,
@@ -86,6 +85,7 @@ class DatabaseHandler:
                             enc_filename VARCHAR(255),
                             enc_alg VARCHAR(50) NOT NULL DEFAULT 'AES-256-GCM',
                             enc_nonce BYTEA,
+                            enc_blob BYTEA,
                             key_version INTEGER NOT NULL DEFAULT 1,
                             file_sha256 CHAR(64),
                             environment VARCHAR(20) NOT NULL DEFAULT 'sandbox',
@@ -94,15 +94,6 @@ class DatabaseHandler:
                             updated_at TIMESTAMP WITHOUT TIME ZONE NOT NULL DEFAULT NOW()
                         )
                     """)
-
-                    cursor.execute("""
-                        ALTER TABLE apn_keys
-                        ADD CONSTRAINT chk_apns_enc_metadata_active
-                        CHECK (
-                        (is_active = FALSE)
-                        OR
-                        (enc_filename IS NOT NULL AND enc_nonce IS NOT NULL)
-                        """)
 
             logger.info("✓ Database initialized successfully")
 
@@ -113,7 +104,6 @@ class DatabaseHandler:
                          category=None, thread_id=None, custom_data=None, priority=None,
                          success=False, error_code=None, error_message=None,
                          apns_id=None, status_code=None, ip_address=None):
-        """Log a notification attempt to the database"""
         try:
             conn = self.get_connection()
             if not conn:
@@ -122,7 +112,6 @@ class DatabaseHandler:
 
             cursor = conn.cursor()
 
-            # Convert custom_data to JSON string if it's a dict
             custom_data_json = json.dumps(custom_data) if custom_data else None
 
             cursor.execute("""
@@ -148,7 +137,6 @@ class DatabaseHandler:
             return False
 
     def get_logs(self, limit=100, offset=0, device_token=None, success=None, start_date=None, end_date=None):
-        """Retrieve notification logs with optional filters"""
         try:
             conn = self.get_connection()
             if not conn:
@@ -191,7 +179,6 @@ class DatabaseHandler:
             return None
 
     def get_stats(self):
-        """Get notification statistics"""
         try:
             conn = self.get_connection()
             if not conn:
