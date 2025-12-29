@@ -95,6 +95,25 @@ class DatabaseHandler:
                         )
                     """)
 
+                    cursor.execute("""
+                        CREATE TABLE IF NOT EXISTS companies(
+                            id BIGSERIAL PRIMARY KEY,
+                            name VARCHAR(255) NOT NULL,
+                            address VARCHAR(255) NOT NULL,
+                            phone VARCHAR(255) NOT NULL,
+                            email VARCHAR(255) NOT NULL,
+                            url VARCHAR(255) not null,
+                            created_at TIMESTAMP WITHOUT TIME ZONE NOT NULL DEFAULT NOW(),
+                            updated_at TIMESTAMP WITHOUT TIME ZONE NOT NULL DEFAULT NOW()
+                        )
+                    """)
+
+                    cursor.execute("""
+                        ALTER TABLE apn_keys 
+                            ADD COLUMN company_id INTEGER
+                            REFERENCES companies (id)
+                    """)
+
             logger.info("✓ Database initialized successfully")
 
         except Exception as e:

@@ -161,6 +161,7 @@ class APNsHandler:
             enc_blob=None,
             key_version=1,
             file_sha256=None,
+            company_id=None,
     ):
         try:
             conn = db.get_connection()
@@ -174,11 +175,11 @@ class APNsHandler:
             cursor.execute("""
                            INSERT INTO apn_keys (
                                key_id, team_id, bundle_id, p8_filename, environment, is_active,
-                               enc_alg, enc_nonce, enc_blob, key_version, file_sha256,enc_filename
-                           ) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+                               enc_alg, enc_nonce, enc_blob, key_version, file_sha256,enc_filename, company_id
+                           ) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
                            """, (
                                key_id, team_id, bundle_id, p8_filename, environment, True,
-                               enc_alg, enc_nonce, enc_blob, key_version, file_sha256, enc_filename
+                               enc_alg, enc_nonce, enc_blob, key_version, file_sha256, enc_filename, company_id
                            ))
 
             conn.commit()
@@ -198,7 +199,7 @@ class APNsHandler:
         cursor = conn.cursor()
         cursor.execute("""
                        SELECT
-                           id, key_id, team_id, bundle_id, environment, is_active, created_at
+                           id, key_id, team_id, bundle_id,company_id, environment, is_active, created_at
                        FROM apn_keys
                        ORDER BY created_at DESC, id DESC
                        """)

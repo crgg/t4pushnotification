@@ -21,6 +21,7 @@ from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 from app.config import Config
 from app.db import DatabaseHandler
 from app.apns_client import APNsHandler
+from app.company import CompanyHandler
 app = Flask(__name__)
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -47,6 +48,8 @@ def _is_valid_team_id(team_id: str) -> bool:
 def _is_valid_bundle_id(bundle_id: str) -> bool:
     return bool(re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]*", bundle_id or ""))
 
+def _is_valid_company_id(company_id: str) -> bool:
+    return bool(re.fullmatch(r"[0-9]",company_id or "") )
 
 def _ensure_upload_dir(upload_dir: str) -> None:
     os.makedirs(upload_dir, exist_ok=True)
@@ -111,6 +114,7 @@ def require_auth(f):
 # ==================== APNs Handler / DB ====================
 apns = APNsHandler()
 db = DatabaseHandler()
+company = CompanyHandler()
 
 if apns.has_active_config():
     try:
@@ -294,9 +298,10 @@ def upload_key():
         key_id = _sanitize_token(form.get("key_id"))
         team_id = _sanitize_token(form.get("team_id"))
         bundle_id = _sanitize_token(form.get("bundle_id"))
+        company_id = _sanitize_token(form.get("company_id"))
         environment = _sanitize_token(form.get("environment") or "sandbox").lower()
 
-        required_fields = ["key_id", "team_id", "bundle_id"]
+        required_fields = ["key_id", "team_id", "bundle_id", "company_id"]
         missing_fields = [f for f in required_fields if not form.get(f)]
         if missing_fields:
             return jsonify(
@@ -311,6 +316,8 @@ def upload_key():
             return jsonify({"success": False, "error": "Invalid key_id format (expected 10 chars A-Z0-9)"}), 400
         if not _is_valid_team_id(team_id):
             return jsonify({"success": False, "error": "Invalid team_id format (expected 10 chars A-Z0-9)"}), 400
+        if not _is_valid_company_id(company_id):
+            return jsonify({"success": False, "error": "Invalid company_id format (must be an integer)"}), 400
         if not _is_valid_bundle_id(bundle_id):
             return jsonify({"success": False, "error": "Invalid bundle_id format"}), 400
         if environment not in ALLOWED_ENVIRONMENTS:
@@ -350,7 +357,7 @@ def upload_key():
             key_version=key_version,
             file_sha256=raw_hash,
             enc_blob=ciphertext,
-
+            company_id=company_id,
         )
         if not ok:
 
@@ -373,6 +380,81 @@ def upload_key():
                 },
             }
         ), 201
+
+    except Exception as e:
+        return jsonify({"success": False, "error": str(e)}), 500
+
+@app.route("/company/new",methods=["POST"])
+#@require_auth
+def company_new():
+    try:
+        form = request.form or {}
+        name = _sanitize_token(form.get("name"))
+        address = _sanitize_token(form.get("address"))
+        email = _sanitize_token(form.get("email"))
+        phone = _sanitize_token(form.get("phone"))
+        url = _sanitize_token(form.get('url'))
+
+        required_fields = ["name", "address"]
+        missing_fields = [f for f in required_fields if not form.get(f)]
+        if missing_fields:
+            return jsonify(
+                {
+                    "success": False,
+                    "error": f"Missing required fields: {', '.join(missing_fields)}",
+                    "required_fields": required_fields,
+                }
+            ), 400
+
+        ok = company.save_company(name, address, phone,email, url)
+        if not ok:
+            return jsonify({"success": False, "error": "Failed to save new Company"}), 500
+
+        return jsonify(
+            {
+                "success": True,
+                "message": "Company saved",
+                "data": {
+                    "name" : name,
+                    "address" : address,
+                    "email": email,
+                    "phone": phone,
+                    "url": url
+                },
+            }
+        ), 201
+
+    except Exception as e:
+        return jsonify({"success": False, "error": str(e)}), 500
+
+
+@app.route("/keys/assign", methods=["POST"])
+#@require_auth
+def assign_key():
+    try:
+        form = request.form or {}
+        company_id = form.get("company_id")
+        key_id = form.get("key_id")
+
+        required_fields = ["key_id","company_id"]
+        missing_fields = [f for f in required_fields if not form.get(f)]
+        if missing_fields:
+            return jsonify(
+                {
+                    "success": False,
+                    "error": f"Missing required fields: {', '.join(missing_fields)}",
+                    "required_fields": required_fields,
+                }
+            ), 400
+
+        ok = company.assign_key(company_id, key_id)
+        if not ok:
+            return jsonify({"success": False, "error": "Failed to assign a company_id to a key"})
+
+        return jsonify({
+            "success": True,
+            "message" : "Key assigned to a Company"
+        })
 
     except Exception as e:
         return jsonify({"success": False, "error": str(e)}), 500
