@@ -387,7 +387,7 @@ def upload_key():
         return jsonify({"success": False, "error": str(e)}), 500
 
 @app.route("/company/new",methods=["POST"])
-#@require_auth
+@require_auth
 def company_new():
     try:
         form = request.form or {}
@@ -431,7 +431,7 @@ def company_new():
 
 
 @app.route("/keys/assign", methods=["POST"])
-#@require_auth
+@require_auth
 def assign_key():
     try:
         form = request.form or {}
@@ -462,7 +462,7 @@ def assign_key():
         return jsonify({"success": False, "error": str(e)}), 500
 
 @app.route("/project/new", methods=["POST"])
-#@require_auth
+@require_auth
 def project_new():
     form = request.form or {}
     name = form.get("name")
@@ -488,7 +488,7 @@ def project_new():
     })
 
 @app.route("/project/assign", methods=["POST"])
-#@require_auth
+@require_auth
 def project_assign():
     form = request.form or {}
     key_id = form.get("company_id")
