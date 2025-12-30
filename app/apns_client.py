@@ -411,6 +411,27 @@ class APNsHandler:
         except Exception as e:
             return {"success": False, "error": str(e), "details": "Unexpected error occurred."}
 
+    def assign_project(self, project_id, key_id):
+        try:
+            conn = db.get_connection()
+            if not conn:
+                return False
+
+            cursor = conn.cursor()
+            cursor.execute("""
+                           UPDATE apn_keys
+                           SET project_id = %s where id = %s
+                           """,(project_id, key_id))
+
+            conn.commit()
+            cursor.close()
+            conn.close()
+
+            return True
+        except Exception as e:
+            logger.error(f"Error in the project assignent: {e}")
+            return False
+
     def _get_error_description(self, reason):
         error_descriptions = {
             "BadDeviceToken": "The device token is invalid. Remove this token from your database.",

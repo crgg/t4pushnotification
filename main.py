@@ -22,6 +22,7 @@ from app.config import Config
 from app.db import DatabaseHandler
 from app.apns_client import APNsHandler
 from app.company import CompanyHandler
+from app.project import ProjectHandler
 app = Flask(__name__)
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -115,6 +116,7 @@ def require_auth(f):
 apns = APNsHandler()
 db = DatabaseHandler()
 company = CompanyHandler()
+project = ProjectHandler()
 
 if apns.has_active_config():
     try:
@@ -458,6 +460,56 @@ def assign_key():
 
     except Exception as e:
         return jsonify({"success": False, "error": str(e)}), 500
+
+@app.route("/project/new", methods=["POST"])
+#@require_auth
+def project_new():
+    form = request.form or {}
+    name = form.get("name")
+    url = form.get("url")
+
+    required_fields = ["name","url"]
+    missing_fields = [f for f in required_fields if not form.get(f)]
+    if missing_fields:
+        return jsonify(
+            {
+                "success": False,
+                "error": f"Missing required fields: {', '.join(missing_fields)}",
+                "required_fields": required_fields,
+            }
+        ), 400
+    ok = project.save_project(name, url)
+    if not ok:
+        return jsonify({"success": False, "error": "Failed to create a new project"})
+
+    return jsonify({
+        "success" : True,
+        "message" : "project saved"
+    })
+
+@app.route("/project/assign", methods=["POST"])
+#@require_auth
+def project_assign():
+    form = request.form or {}
+    key_id = form.get("company_id")
+    project_id = form.get("project_id")
+    required_fields = ["key_id","project_id"]
+    missing_fields = [f for f in required_fields if not form.get(f)]
+    if missing_fields:
+        return jsonify(
+            {
+                "success": False,
+                "error": f"Missing required fields: {', '.join(missing_fields)}",
+                "required_fields": required_fields,
+            }
+        ), 400
+    ok = apns.assign_project(project_id, key_id)
+    if not ok:
+        return jsonify({"success": False, "error": "Failed to assign a project_id to a key"})
+    return jsonify({
+        "success" : True,
+        "message" : "Project_id assigned to key"
+    })
 
 
 # ==================== Main ====================

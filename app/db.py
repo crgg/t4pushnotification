@@ -109,10 +109,24 @@ class DatabaseHandler:
                     """)
 
                     cursor.execute("""
+                                   CREATE TABLE IF NOT EXISTS projects(
+                                                                          id BIGSERIAL PRIMARY KEY,
+                                                                          name VARCHAR(255) NOT NULL,
+                                       url VARCHAR(255),
+                                       created_at TIMESTAMP WITHOUT TIME ZONE NOT NULL DEFAULT NOW(),
+                                       updated_at TIMESTAMP WITHOUT TIME ZONE NOT NULL DEFAULT NOW()
+                                       )
+                                   """)
+
+                    cursor.execute("""
                         ALTER TABLE apn_keys 
                             ADD COLUMN company_id INTEGER
-                            REFERENCES companies (id)
+                            REFERENCES companies (id),
+                            ADD COLUMN project_id INTEGER
+                            REFERENCES projects (id)
                     """)
+
+
 
             logger.info("✓ Database initialized successfully")
 
