@@ -210,6 +210,7 @@ def send_notification():
             priority=payload.get("priority", "high"),
             collapse_id=payload.get("collapse_id"),
             expiration=payload.get("expiration"),
+            pushtype=payload.get("pushtype")
         )
 
         status_code = 200 if result.get("success") else 400
@@ -240,6 +241,7 @@ def list_keys():
                 key_id,
                 team_id,
                 bundle_id,
+                company_id,
                 environment,
                 is_active,
                 created_at,
@@ -250,6 +252,7 @@ def list_keys():
                 "key_id": key_id,
                 "team_id": team_id,
                 "bundle_id": bundle_id,
+                "company_id": company_id,
                 "environment": environment,
                 "is_active": bool(is_active),
                 "created_at": created_at.isoformat() if created_at else None,
@@ -491,7 +494,7 @@ def project_new():
 @require_auth
 def project_assign():
     form = request.form or {}
-    key_id = form.get("company_id")
+    key_id = form.get("key_id")
     project_id = form.get("project_id")
     required_fields = ["key_id","project_id"]
     missing_fields = [f for f in required_fields if not form.get(f)]

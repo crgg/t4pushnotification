@@ -326,6 +326,7 @@ class APNsHandler:
             priority="high",
             collapse_id=None,
             expiration=None,
+            pushtype="alert",
     ):
         if not self.auth_key:
             return {
@@ -342,12 +343,20 @@ class APNsHandler:
                 "details": "Check your Key ID, Team ID, and decrypted .p8 validity",
             }
 
-        payload = {
-            "aps": {
-                "alert": {"title": title, "body": message},
-                "sound": sound,
+        if pushtype == "alert" :
+            payload = {
+                "aps": {
+                    "alert": {"title": title, "body": message},
+                    "sound": sound,
+                }
             }
-        }
+        else:
+            payload = {
+                "aps" : {
+                    "content-available" : 1
+                },
+                "body" : message,
+            }
 
         if badge is not None:
             payload["aps"]["badge"] = badge
@@ -363,7 +372,7 @@ class APNsHandler:
         headers = {
             "authorization": f"bearer {jwt_token}",
             "apns-topic": self.bundle_id,
-            "apns-push-type": "alert",
+            "apns-push-type": pushtype,
             "apns-priority": "10" if priority == "high" else "5",
             "apns-expiration": str(expiration) if expiration is not None else "0",
         }
