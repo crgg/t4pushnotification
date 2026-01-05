@@ -356,6 +356,7 @@ class APNsHandler:
                     "content-available" : 1
                 },
                 "body" : message,
+                "category" : category
             }
 
         if badge is not None:
