@@ -128,7 +128,7 @@ class DatabaseHandler:
 
 
 
-            logger.info("✓ Database initialized successfully")
+            logger.info(" Database initialized successfully")
 
         except Exception as e:
             logger.error(f"Database initialization error: {str(e)}")
@@ -162,7 +162,7 @@ class DatabaseHandler:
             conn.commit()
             cursor.close()
             conn.close()
-            logger.info("✓ Notification inserted successfully")
+            logger.info(" Notification inserted successfully")
             return True
 
         except Exception as e:

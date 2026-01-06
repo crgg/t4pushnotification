@@ -127,7 +127,7 @@ class APNsHandler:
         self.cached_token = None
         self.token_expiry = 0
 
-        logger.info(f"✓ Active APNs config loaded from DB (env={environment}, key_id={key_id})")
+        logger.info(f" Active APNs config loaded from DB (env={environment}, key_id={key_id})")
 
     def has_active_config(self) -> bool:
             try:
