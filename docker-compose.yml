@@ -1,0 +1,56 @@
+version: '3.8'
+
+services:
+  apns-server:
+    build: .
+    container_name: apns-server
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    environment:
+      - FLASK_ENV=production
+      - DATABASE_URL=postgresql://apns_user:${DB_PASSWORD}@postgres:5432/apns_db
+      - REDIS_URL=redis://redis:6379/0
+    env_file:
+      - .env
+    volumes:
+      - ./storage:/app/storage
+      - ./logs:/var/log/apns-server
+    depends_on:
+      - postgres
+      - redis
+    networks:
+      - apns-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  postgres:
+    image: postgres:15-alpine
+    container_name: apns-postgres
+    restart: unless-stopped
+    environment:
+      - POSTGRES_USER=apns_user
+      - POSTGRES_PASSWORD=${DB_PASSWORD}
+      - POSTGRES_DB=apns_db
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+      - ./init.sql:/docker-entrypoint-initdb.d/init.sql
+    networks:
+      - apns-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U apns_user"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  postgres-data:
+  redis-data:
+
+networks:
+  apns-network:
+    driver: bridge
