@@ -123,4 +123,6 @@ return [
         'store' => env('APP_MAINTENANCE_STORE', 'database'),
     ],
 
+    'passphrase' => env('APP_PASS_PHRASE','NO_PASS_PHRASE'),
+    'python_url' => env('APP_PYTHON_URL','http://localhost:5000/'),
 ];

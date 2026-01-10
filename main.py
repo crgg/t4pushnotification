@@ -340,16 +340,15 @@ def health_check():
 def send_notification():
     """Send push notification to device"""
     try:
-        payload = request.get_json() or {}
-
-        # Validate required fields
+        payload = request.get_json(silent=True) or request.form.to_dict() or {}
         required_fields = ["device_token", "title", "message"]
-        missing_fields = [f for f in required_fields if f not in payload]
+        missing_fields = [f for f in required_fields if not payload.get(f)]
         if missing_fields:
             return jsonify({
                 "success": False,
                 "error": f"Missing required fields: {', '.join(missing_fields)}",
                 "required_fields": required_fields,
+                "hint": "Send JSON with Content-Type: application/json or use form-data fields.",
             }), 400
 
         device_token = payload["device_token"]
@@ -418,12 +417,13 @@ def list_keys():
         items = []
 
         for r in rows:
-            _id, key_id, team_id, bundle_id, company_id, environment, is_active, created_at = r
+            _id, key_id, team_id, bundle_id,p8_filename, company_id, environment, is_active, created_at = r
             items.append({
                 "id": _id,
                 "key_id": key_id,
                 "team_id": team_id,
                 "bundle_id": bundle_id,
+                "p8_filename" : p8_filename,
                 "company_id": company_id,
                 "environment": environment,
                 "is_active": bool(is_active),
@@ -619,6 +619,67 @@ def company_new():
     except Exception as e:
         logger.error(f"Error creating company: {e}", exc_info=True)
         return jsonify({"success": False, "error": "Failed to create company"}), 500
+
+
+@app.route('/companies/list',methods=["GET"])
+@require_auth
+def get_companies():
+    try:
+        rows = company.company_list()
+        items = []
+
+        for r in rows:
+            _id, name, address, phone, email, url, created_at, updated_at = r
+            items.append({
+                "id": _id,
+                "name": name,
+                "address": address,
+                "phone": phone,
+                "email": email,
+                "url": url,
+                "created_at": created_at.isoformat() if created_at else None,
+                "updated_at": updated_at.isoformat() if updated_at else None,
+            })
+
+        return jsonify({"success": True, "data": items}), 200
+
+    except Exception as e:
+        logger.error(f"Error listing keys: {e}", exc_info=True)
+        return jsonify({"success": False, "error": "Failed to retrieve keys"}), 500
+
+@app.route('/logs',methods=["GET"])
+@require_auth
+def get_logs():
+    try:
+        rows = db.get_stats()
+        items = []
+
+        for r in rows:
+            _id, device_token,title,message,badge,sound, category,thread_id,custom_data,priority,success,error_code,error_message,apns_id,status_code,ip_address,created_at = r
+            items.append({
+                "id": _id,
+                "device_token": device_token,
+                "title": title,
+                "message": message,
+                "badge": badge,
+                "sound": sound,
+                "category": category,
+                "thread_id": thread_id,
+                "custom_data": custom_data,
+                "priority": priority,
+                "success": success,
+                "error_code": error_code,
+                "error_message": error_message,
+                "apns_id": apns_id,
+                "status_code": status_code,
+                "ip_address": ip_address,
+                "created_at": created_at
+            })
+        return jsonify({"success": True, "data": items}), 200
+    except Exception as e:
+        logger.error(f"Error listing logs: {e}", exc_info=True)
+        return jsonify({"success": False, "error": "Failed to retrieve logs"}), 500
+
 
 @app.route("/keys/assign", methods=["POST"])
 @require_auth

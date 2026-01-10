@@ -199,7 +199,7 @@ class APNsHandler:
         cursor = conn.cursor()
         cursor.execute("""
                        SELECT
-                           id, key_id, team_id, bundle_id,company_id, environment, is_active, created_at
+                           id, key_id, team_id, bundle_id, p8_filename, company_id, environment, is_active, created_at
                        FROM apn_keys
                        ORDER BY created_at DESC, id DESC
                        """)

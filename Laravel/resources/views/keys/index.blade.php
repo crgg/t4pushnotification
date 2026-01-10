@@ -27,8 +27,17 @@
 
     <div class="container notifications-container">
 
-        <h1 class="page-title">Companies</h1>
-
+        <h1 class="page-title">Keys</h1>
+        <div class="page-actions">
+            <button type="button" class="btn-primary" id="openUploadKeyModal">
+                Upload New Key
+            </button>
+        </div>
+        <div class="page-actions">
+            <button type="button" class="btn-primary" id="openSendNotificationModal">
+                Send Notification
+            </button>
+        </div>
         @if ($items->isEmpty())
             <div class="alert-info">
                 No records found.
@@ -42,8 +51,9 @@
                         <th>ID</th>
                         <th>Bundle ID</th>
                         <th>Filename</th>
-                        <th>Active</th>
                         <th>Company</th>
+                        <th>Active</th>
+                        <th>Make Active</th>
                     </tr>
                     </thead>
                     <tbody>
@@ -53,12 +63,27 @@
                             <td>{{ $item->id }}</td>
                             <td>{{ $item->bundle_id }}</td>
                             <td>{{ $item->p8_filename }}</td>
+                            <td>{{ $item->company->name }}</td>
                             <td>
                             <span class="badge {{ $item->is_active ? 'badge-success' : 'badge-error' }}">
                                 {{ $item->is_active ? 'Yes' : 'No' }}
                             </span>
                             </td>
-                            <td>{{ $item->company->name }}</td>
+                            <td>
+                                @if ($item->is_active)
+                                    <button class="btn-activate btn-disabled" disabled>
+                                        Activate
+                                    </button>
+                                @else
+                                    <form method="POST" action="{{ url('activate_key') }}" class="inline-form">
+                                        @csrf
+                                        <input type="hidden" name="bundle_id" value="{{ $item->bundle_id }}">
+                                        <button type="submit" class="btn-activate">
+                                            Activate
+                                        </button>
+                                    </form>
+                                @endif
+                            </td>
                         </tr>
                     @endforeach
                     </tbody>
@@ -66,10 +91,6 @@
             </div>
         @endif
         <div class="pagination-bar">
-           {{-- <div class="pagination-meta">
-                Showing <strong>{{ $items->firstItem() }}</strong> to <strong>{{ $items->lastItem() }}</strong>
-                of <strong>{{ $items->total() }}</strong> results
-            </div>--}}
 
             <div class="pagination-links">
                 {{ $items->onEachSide(1)->withQueryString()->links() }}
@@ -79,6 +100,181 @@
     </div>
 
 </div>
+<div class="modal-overlay" id="uploadKeyModal" aria-hidden="true">
+    <div class="modal" role="dialog" aria-modal="true" aria-labelledby="uploadKeyTitle">
+        <div class="modal-header">
+            <h2 class="modal-title" id="uploadKeyTitle">Upload Key File</h2>
+            <button type="button" class="modal-close" id="closeUploadKeyModal" aria-label="Close">×</button>
+        </div>
+
+        <form method="POST" action="{{ url('upload_key') }}" enctype="multipart/form-data" class="modal-body">
+            @csrf
+
+            <div class="form-grid">
+                <div class="form-group">
+                    <label class="form-label" for="key_id">Key ID</label>
+                    <input class="form-input" type="text" name="key_id" id="key_id" required maxlength="255" autocomplete="off">
+                </div>
+
+                <div class="form-group">
+                    <label class="form-label" for="team_id">Team ID</label>
+                    <input class="form-input" type="text" name="team_id" id="team_id" required maxlength="255" autocomplete="off">
+                </div>
+
+                <div class="form-group">
+                    <label class="form-label" for="bundle_id">Bundle ID</label>
+                    <input class="form-input" type="text" name="bundle_id" id="bundle_id" required maxlength="255" autocomplete="off">
+                </div>
+
+                <div class="form-group">
+                    <label class="form-label" for="company_id">Company ID</label>
+                    <input class="form-input" type="text" name="company_id" id="company_id" required maxlength="255" autocomplete="off">
+                </div>
+
+                <div class="form-group form-group-full">
+                    <label class="form-label" for="file">Key File</label>
+                    <input class="form-input" type="file" name="file" id="file" required>
+                    <p class="help-text">Upload the APNs key file (commonly a .p8).</p>
+                </div>
+            </div>
+
+            <div class="modal-footer">
+                <button type="button" class="btn-secondary" id="cancelUploadKeyModal">Cancel</button>
+                <button type="submit" class="btn-primary">Upload</button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<div class="modal-overlay" id="sendNotificationModal" aria-hidden="true">
+    <div class="modal" role="dialog" aria-modal="true" aria-labelledby="sendNotificationTitle">
+        <div class="modal-header">
+            <h2 class="modal-title" id="sendNotificationTitle">Send Notification</h2>
+            <button type="button" class="modal-close" id="closeSendNotificationModal" aria-label="Close">×</button>
+        </div>
+
+        <form method="POST" action="{{ url('send_notification') }}" class="modal-body">
+            @csrf
+
+            <div class="form-grid">
+                <div class="form-group form-group-full">
+                    <label class="form-label" for="device_token">Device Token</label>
+                    <input
+                        class="form-input"
+                        type="text"
+                        name="device_token"
+                        id="device_token"
+                        required
+                        autocomplete="off"
+                        placeholder="e.g. abc123…"
+                    >
+                </div>
+
+                <div class="form-group form-group-full">
+                    <label class="form-label" for="title">Title</label>
+                    <input
+                        class="form-input"
+                        type="text"
+                        name="title"
+                        id="title"
+                        required
+                        maxlength="120"
+                        placeholder="Notification title"
+                    >
+                </div>
+
+                <div class="form-group form-group-full">
+                    <label class="form-label" for="message">Message</label>
+                    <textarea
+                        class="form-input"
+                        name="message"
+                        id="message"
+                        rows="4"
+                        required
+                        maxlength="500"
+                        placeholder="Notification message"
+                    ></textarea>
+                </div>
+            </div>
+
+            <div class="modal-footer">
+                <button type="button" class="btn-secondary" id="cancelSendNotificationModal">
+                    Cancel
+                </button>
+                <button type="submit" class="btn-primary">
+                    Send
+                </button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<script>
+    (function () {
+        const modal = document.getElementById('uploadKeyModal');
+        const openBtn = document.getElementById('openUploadKeyModal');
+        const closeBtn = document.getElementById('closeUploadKeyModal');
+        const cancelBtn = document.getElementById('cancelUploadKeyModal');
+
+        function openModal() {
+            modal.classList.add('is-open');
+            modal.setAttribute('aria-hidden', 'false');
+            const first = modal.querySelector('input, button, select, textarea');
+            if (first) first.focus();
+        }
+
+        function closeModal() {
+            modal.classList.remove('is-open');
+            modal.setAttribute('aria-hidden', 'true');
+        }
+
+        openBtn?.addEventListener('click', openModal);
+        closeBtn?.addEventListener('click', closeModal);
+        cancelBtn?.addEventListener('click', closeModal);
+
+        modal?.addEventListener('click', function (e) {
+            if (e.target === modal) closeModal();
+        });
+
+        document.addEventListener('keydown', function (e) {
+            if (e.key === 'Escape' && modal.classList.contains('is-open')) closeModal();
+        });
+    })();
+</script>
+<script>
+    (function () {
+        const modal = document.getElementById('sendNotificationModal');
+        const openBtn = document.getElementById('openSendNotificationModal');
+        const closeBtn = document.getElementById('closeSendNotificationModal');
+        const cancelBtn = document.getElementById('cancelSendNotificationModal');
+
+        function openModal() {
+            modal.classList.add('is-open');
+            modal.setAttribute('aria-hidden', 'false');
+            const first = modal.querySelector('input, textarea, button');
+            if (first) first.focus();
+        }
+
+        function closeModal() {
+            modal.classList.remove('is-open');
+            modal.setAttribute('aria-hidden', 'true');
+        }
+
+        openBtn?.addEventListener('click', openModal);
+        closeBtn?.addEventListener('click', closeModal);
+        cancelBtn?.addEventListener('click', closeModal);
+
+        modal?.addEventListener('click', function (e) {
+            if (e.target === modal) closeModal();
+        });
+
+        document.addEventListener('keydown', function (e) {
+            if (e.key === 'Escape' && modal.classList.contains('is-open')) {
+                closeModal();
+            }
+        });
+    })();
+</script>
 </body>
 
 
@@ -208,5 +404,153 @@
             flex-direction: column;
             align-items: flex-start;
         }
+    }
+    .page-actions {
+        display: flex;
+        justify-content: flex-end;
+        margin-bottom: 12px;
+    }
+
+    .btn-primary, .btn-secondary {
+        border: 1px solid transparent;
+        border-radius: 8px;
+        padding: 10px 14px;
+        font-size: 14px;
+        font-weight: 600;
+        cursor: pointer;
+    }
+
+    .btn-primary {
+        background: #111827;
+        color: #fff;
+    }
+    .btn-primary:hover { background: #0b1220; }
+
+    .btn-secondary {
+        background: #fff;
+        border-color: #e5e7eb;
+        color: #111827;
+    }
+    .btn-secondary:hover { background: #f9fafb; }
+
+    /* Modal */
+    .modal-overlay {
+        position: fixed;
+        inset: 0;
+        display: none;
+        align-items: center;
+        justify-content: center;
+        background: rgba(0,0,0,0.45);
+        padding: 16px;
+        z-index: 9999;
+    }
+
+    .modal-overlay.is-open { display: flex; }
+
+    .modal {
+        width: 100%;
+        max-width: 680px;
+        background: #fff;
+        border-radius: 12px;
+        box-shadow: 0 20px 60px rgba(0,0,0,0.25);
+        overflow: hidden;
+    }
+
+    .modal-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 14px 16px;
+        border-bottom: 1px solid #e5e7eb;
+    }
+
+    .modal-title {
+        font-size: 16px;
+        font-weight: 700;
+        margin: 0;
+    }
+
+    .modal-close {
+        border: none;
+        background: transparent;
+        font-size: 22px;
+        line-height: 1;
+        cursor: pointer;
+        color: #6b7280;
+    }
+    .modal-close:hover { color: #111827; }
+
+    .modal-body { padding: 16px; }
+
+    .form-grid {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 12px;
+    }
+
+    .form-group-full { grid-column: 1 / -1; }
+
+    .form-label {
+        display: block;
+        font-size: 13px;
+        font-weight: 600;
+        margin-bottom: 6px;
+        color: #111827;
+    }
+
+    .form-input {
+        width: 100%;
+        border: 1px solid #e5e7eb;
+        border-radius: 8px;
+        padding: 10px 12px;
+        font-size: 14px;
+        outline: none;
+    }
+    .form-input:focus { border-color: #111827; }
+
+    .help-text {
+        margin-top: 6px;
+        font-size: 12px;
+        color: #6b7280;
+    }
+
+    .modal-footer {
+        display: flex;
+        justify-content: flex-end;
+        gap: 10px;
+        padding-top: 14px;
+    }
+
+    @media (max-width: 640px) {
+        .form-grid { grid-template-columns: 1fr; }
+    }
+    .inline-form {
+        display: inline;
+    }
+
+    .btn-activate {
+        padding: 6px 12px;
+        font-size: 13px;
+        font-weight: 600;
+        border-radius: 6px;
+        border: 1px solid #111827;
+        background: #111827;
+        color: #ffffff;
+        cursor: pointer;
+    }
+
+    .btn-activate:hover {
+        background: #0b1220;
+    }
+
+    .btn-disabled {
+        background: #e5e7eb;
+        border-color: #e5e7eb;
+        color: #6b7280;
+        cursor: not-allowed;
+    }
+
+    .btn-disabled:hover {
+        background: #e5e7eb;
     }
 </style>

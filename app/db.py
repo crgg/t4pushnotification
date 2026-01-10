@@ -217,51 +217,16 @@ class DatabaseHandler:
             if not conn:
                 return None
 
-            cursor = conn.cursor(cursor_factory=RealDictCursor)
+            cursor = conn.cursor()
 
             # Total notifications
-            cursor.execute("SELECT COUNT(*) as total FROM notification_logs")
-            total = cursor.fetchone()['total']
-
-            # Success count
-            cursor.execute("SELECT COUNT(*) as success_count FROM notification_logs WHERE success = true")
-            success_count = cursor.fetchone()['success_count']
-
-            # Failed count
-            cursor.execute("SELECT COUNT(*) as failed_count FROM notification_logs WHERE success = false")
-            failed_count = cursor.fetchone()['failed_count']
-
-            # Today's count
-            cursor.execute("""
-                           SELECT COUNT(*) as today_count
-                           FROM notification_logs
-                           WHERE DATE(created_at) = CURRENT_DATE
-                           """)
-            today_count = cursor.fetchone()['today_count']
-
-            # Most common errors
-            cursor.execute("""
-                           SELECT error_code, COUNT(*) as count
-                           FROM notification_logs
-                           WHERE success = false AND error_code IS NOT NULL
-                           GROUP BY error_code
-                           ORDER BY count DESC
-                               LIMIT 5
-                           """)
-            common_errors = cursor.fetchall()
+            cursor.execute("SELECT * FROM notification_logs")
+            rows = cursor.fetchall()
 
             cursor.close()
             conn.close()
 
-            return {
-                'total': total,
-                'success': success_count,
-                'failed': failed_count,
-                'today': today_count,
-                'success_rate': round((success_count / total * 100), 2) if total > 0 else 0,
-                'common_errors': common_errors
-            }
-
+            return rows
         except Exception as e:
             logger.error(f"Error getting stats: {str(e)}")
             return None

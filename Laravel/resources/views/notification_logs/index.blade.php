@@ -50,7 +50,7 @@
                         <tbody>
                         @foreach ($items as $index => $item)
                             <tr>
-                                <td>{{ $items->firstItem() + $index }}</td>
+                                <td>{{ $index +1 }}</td>
                                 <td>{{ $item->id }}</td>
                                 <td>{{ $item->created_at }}</td>
                                 <td class="truncate" title="{{ $item->device_token }}">

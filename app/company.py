@@ -62,3 +62,17 @@ class CompanyHandler:
         except Exception as e:
             logger.error(f"Error assigning Company to a Key: {e} ")
             return False
+
+    def company_list(self):
+        conn = db.get_connection()
+        if not conn:
+            return False
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT * from companies
+        """)
+
+        rows = cursor.fetchall()
+        cursor.close()
+        conn.close()
+        return rows

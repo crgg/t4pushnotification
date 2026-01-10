@@ -27,4 +27,10 @@ Route::get('companies',[CompanyController::class,'index'])
     ->middleware(['auth'])
     ->name('companies.index');
 
+Route::post('upload_key',[KeyController::class,'upload_key']);
+
+Route::post('activate_key',[KeyController::class,'set_active_key']);
+
+Route::post('send_notification',[NotificationLogController::class,'send_notification']);
+
 require __DIR__.'/auth.php';
